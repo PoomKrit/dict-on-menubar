@@ -33,13 +33,17 @@ let thaiEnglishDictionary: DCSDictionaryRef? = {
 /// Look up `text` in the Thai-English dictionary. Returns the raw definition
 /// string, or nil when the input is empty/whitespace or has no entry.
 func translate(_ text: String) -> String? {
+    // Fail closed when the Thai-English dictionary is not enabled: passing a
+    // nil dictionary would make DCSCopyTextDefinition search ALL active
+    // dictionaries, silently violating the "th-en only" contract.
+    guard let dict = thaiEnglishDictionary else { return nil }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     let ns = trimmed as NSString
     // CFRange length MUST be UTF-16 code units, not Swift String.count,
     // or Thai words with combining marks silently fail to resolve.
     let range = CFRangeMake(0, ns.length)
-    guard let def = DCSCopyTextDefinition(thaiEnglishDictionary, trimmed as CFString, range)?.takeRetainedValue() else {
+    guard let def = DCSCopyTextDefinition(dict, trimmed as CFString, range)?.takeRetainedValue() else {
         return nil
     }
     return def as String
@@ -97,6 +101,10 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
         resultTextView.drawsBackground = false
         resultTextView.font = NSFont.systemFont(ofSize: 13)
         resultTextView.textContainerInset = NSSize(width: 4, height: 4)
+        // Wrap long definition lines to the fixed popover width instead of
+        // running off the right edge.
+        resultTextView.isHorizontallyResizable = false
+        resultTextView.textContainer?.widthTracksTextView = true
         resultTextView.string = "พิมพ์คำเพื่อค้นหา"
         resultTextView.textColor = .secondaryLabelColor
 
