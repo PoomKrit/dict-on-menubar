@@ -135,10 +135,13 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
     var onQuit: (() -> Void)?
 
     private let searchField = NSSearchField()
+    private let suggestionsStack = NSStackView()
+    private let suggestionsScrollView = NSScrollView()
     private let resultTextView = NSTextView()
     private let scrollView = NSScrollView()
     private var debounceTimer: Timer?
     private let spellDocumentTag = NSSpellChecker.uniqueSpellDocumentTag()
+    private let maxSuggestions = 10
 
     private let contentWidth: CGFloat = 320
     private let resultsHeight: CGFloat = 220
@@ -165,6 +168,25 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
         ])
 
         let innerWidth = contentWidth - 24  // minus edge insets
+
+        // Suggestion chips (clickable word completions), shown above the
+        // search field. Hidden by default; NSStackView collapses its
+        // spacing around a hidden arranged subview automatically.
+        suggestionsStack.orientation = .horizontal
+        suggestionsStack.alignment = .centerY
+        suggestionsStack.spacing = 4
+        suggestionsScrollView.documentView = suggestionsStack
+        suggestionsScrollView.hasHorizontalScroller = false
+        suggestionsScrollView.hasVerticalScroller = false
+        suggestionsScrollView.drawsBackground = false
+        suggestionsScrollView.borderType = .noBorder
+        suggestionsScrollView.translatesAutoresizingMaskIntoConstraints = false
+        suggestionsScrollView.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+        suggestionsScrollView.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        suggestionsStack.translatesAutoresizingMaskIntoConstraints = false
+        suggestionsStack.heightAnchor.constraint(equalTo: suggestionsScrollView.heightAnchor).isActive = true
+        suggestionsScrollView.isHidden = true
+        stack.addArrangedSubview(suggestionsScrollView)
 
         // Search field
         searchField.placeholderString = "พิมพ์คำ ไทย หรือ อังกฤษ…"
@@ -225,35 +247,56 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         debounceTimer?.invalidate()
         let query = searchField.stringValue
+        updateSuggestions(for: query)
         debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
             self?.performLookup(query)
         }
-        // Ask AppKit's built-in completion popup to refresh. It calls back
-        // into control(_:textView:completions:forPartialWordRange:...) below
-        // for the candidate list.
-        if let editor = searchField.currentEditor() as? NSTextView {
-            editor.complete(nil)
-        }
     }
 
-    /// Supplies word completions for the built-in NSTextView completion
-    /// popup (the standard macOS autocomplete dropdown). Detects Thai vs.
-    /// English from the typed text's Unicode range and asks NSSpellChecker
-    /// for that language's completions — this is the same system word list
-    /// used by every native macOS text field, so it needs no bundled word
-    /// list and stays fully offline.
-    func control(_ control: NSControl, textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String] {
-        let partial = (textView.string as NSString).substring(with: charRange)
-        guard !partial.isEmpty else { return [] }
-        let isThai = partial.unicodeScalars.contains { (0x0E00...0x0E7F).contains($0.value) }
+    /// Rebuilds the clickable suggestion chip row above the search field.
+    /// Detects Thai vs. English from the typed text's Unicode range and asks
+    /// NSSpellChecker for that language's completions — this is the same
+    /// system word list every native macOS text field uses for autocomplete,
+    /// so it needs no bundled word list and stays fully offline.
+    private func updateSuggestions(for query: String) {
+        suggestionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            suggestionsScrollView.isHidden = true
+            return
+        }
+
+        let isThai = trimmed.unicodeScalars.contains { (0x0E00...0x0E7F).contains($0.value) }
         let language = isThai ? "th" : "en"
-        index.pointee = -1
-        return NSSpellChecker.shared.completions(
-            forPartialWordRange: NSRange(location: 0, length: (partial as NSString).length),
-            in: partial,
+        let completions = NSSpellChecker.shared.completions(
+            forPartialWordRange: NSRange(location: 0, length: (trimmed as NSString).length),
+            in: trimmed,
             language: language,
             inSpellDocumentWithTag: spellDocumentTag
         ) ?? []
+
+        guard !completions.isEmpty else {
+            suggestionsScrollView.isHidden = true
+            return
+        }
+
+        for word in completions.prefix(maxSuggestions) {
+            let chip = NSButton(title: word, target: self, action: #selector(suggestionClicked(_:)))
+            chip.bezelStyle = .roundRect
+            chip.setButtonType(.momentaryPushIn)
+            chip.font = NSFont.systemFont(ofSize: 12)
+            suggestionsStack.addArrangedSubview(chip)
+        }
+        suggestionsScrollView.isHidden = false
+    }
+
+    @objc private func suggestionClicked(_ sender: NSButton) {
+        let word = sender.title
+        searchField.stringValue = word
+        updateSuggestions(for: word)
+        debounceTimer?.invalidate()
+        performLookup(word)
     }
 
     private func performLookup(_ query: String) {
