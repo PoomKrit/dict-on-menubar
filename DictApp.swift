@@ -163,11 +163,51 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
     }
 }
 
+// MARK: - Menubar Controller
+
+final class MenubarController: NSObject {
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let popover = NSPopover()
+    private let popoverVC = PopoverViewController()
+
+    override init() {
+        super.init()
+
+        popoverVC.onQuit = { NSApplication.shared.terminate(nil) }
+
+        popover.contentViewController = popoverVC
+        popover.behavior = .transient
+        popover.animates = true
+
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "character.book.closed",
+                                   accessibilityDescription: "Dictionary")
+            button.image?.isTemplate = true
+            button.target = self
+            button.action = #selector(togglePopover(_:))
+        }
+    }
+
+    @objc private func togglePopover(_ sender: Any?) {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+            popoverVC.focusSearchField()
+        }
+    }
+}
+
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menubarController: MenubarController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        menubarController = MenubarController()
     }
 }
 
