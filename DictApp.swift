@@ -152,7 +152,7 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
             resultTextView.string = def
             resultTextView.textColor = .labelColor
         } else {
-            resultTextView.string = "ไม่พบคำว่า \"\(trimmed)\""
+            resultTextView.string = "ไม่พบคำว่า “\(trimmed)”"
             resultTextView.textColor = .secondaryLabelColor
         }
         resultTextView.scroll(NSPoint.zero)
