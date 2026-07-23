@@ -45,6 +45,126 @@ func translate(_ text: String) -> String? {
     return def as String
 }
 
+// MARK: - Popover View Controller
+
+final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
+    var onQuit: (() -> Void)?
+
+    private let searchField = NSSearchField()
+    private let resultTextView = NSTextView()
+    private let scrollView = NSScrollView()
+    private var debounceTimer: Timer?
+
+    private let contentWidth: CGFloat = 320
+    private let resultsHeight: CGFloat = 220
+
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 0))
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: view.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        let innerWidth = contentWidth - 24  // minus edge insets
+
+        // Search field
+        searchField.placeholderString = "พิมพ์คำ ไทย หรือ อังกฤษ…"
+        searchField.delegate = self
+        searchField.sendsSearchStringImmediately = false
+        searchField.sendsWholeSearchString = false
+        searchField.font = NSFont.systemFont(ofSize: 14)
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+        stack.addArrangedSubview(searchField)
+
+        // Results scroll view + text view
+        resultTextView.isEditable = false
+        resultTextView.isSelectable = true
+        resultTextView.drawsBackground = false
+        resultTextView.font = NSFont.systemFont(ofSize: 13)
+        resultTextView.textContainerInset = NSSize(width: 4, height: 4)
+        resultTextView.string = "พิมพ์คำเพื่อค้นหา"
+        resultTextView.textColor = .secondaryLabelColor
+
+        scrollView.documentView = resultTextView
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+        scrollView.heightAnchor.constraint(equalToConstant: resultsHeight).isActive = true
+        stack.addArrangedSubview(scrollView)
+
+        // Divider
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+        stack.addArrangedSubview(divider)
+
+        // Quit button
+        let quitBtn = NSButton(title: "Quit Dict on Menubar", target: self, action: #selector(quitClicked))
+        quitBtn.bezelStyle = .roundRect
+        quitBtn.setButtonType(.momentaryPushIn)
+        quitBtn.font = NSFont.systemFont(ofSize: 12)
+        quitBtn.translatesAutoresizingMaskIntoConstraints = false
+        quitBtn.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+        stack.addArrangedSubview(quitBtn)
+
+        view.layoutSubtreeIfNeeded()
+    }
+
+    func focusSearchField() {
+        view.window?.makeFirstResponder(searchField)
+    }
+
+    // Fires on every keystroke.
+    func controlTextDidChange(_ obj: Notification) {
+        debounceTimer?.invalidate()
+        let query = searchField.stringValue
+        debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            self?.performLookup(query)
+        }
+    }
+
+    private func performLookup(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            resultTextView.string = "พิมพ์คำเพื่อค้นหา"
+            resultTextView.textColor = .secondaryLabelColor
+            return
+        }
+        if let def = translate(trimmed) {
+            resultTextView.string = def
+            resultTextView.textColor = .labelColor
+        } else {
+            resultTextView.string = "ไม่พบคำว่า \"\(trimmed)\""
+            resultTextView.textColor = .secondaryLabelColor
+        }
+        resultTextView.scroll(NSPoint.zero)
+    }
+
+    @objc private func quitClicked() {
+        onQuit?()
+    }
+}
+
+// MARK: - App Delegate
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
