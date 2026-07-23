@@ -13,6 +13,7 @@ mkdir -p "${BUNDLE}/Contents/MacOS"
 mkdir -p "${BUNDLE}/Contents/Resources"
 
 cp "${APP}" "${BUNDLE}/Contents/MacOS/"
+cp AppIcon.icns "${BUNDLE}/Contents/Resources/"
 
 cat > "${BUNDLE}/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,6 +34,8 @@ cat > "${BUNDLE}/Contents/Info.plist" << 'PLIST'
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSUIElement</key>
     <true/>
 </dict>
