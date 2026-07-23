@@ -9,34 +9,45 @@ import CoreServices
 
 typealias DCSDictionaryRef = CFTypeRef
 
+// "Get"-named CF functions follow the Get rule (caller does not own the
+// result), unlike "Copy"-named ones below. Declaring them as Unmanaged and
+// consuming with takeUnretainedValue() avoids an over-release that corrupts
+// the heap and crashes on the *second* call in the process's lifetime.
 @_silgen_name("DCSGetActiveDictionaries")
-func DCSGetActiveDictionaries() -> CFArray
+func DCSGetActiveDictionaries() -> Unmanaged<CFArray>
 
 @_silgen_name("DCSDictionaryGetIdentifier")
-func DCSDictionaryGetIdentifier(_ dict: DCSDictionaryRef) -> CFString
+func DCSDictionaryGetIdentifier(_ dict: DCSDictionaryRef) -> Unmanaged<CFString>
 
 @_silgen_name("DCSCopyTextDefinition")
 func DCSCopyTextDefinition(_ dict: DCSDictionaryRef?, _ text: CFString, _ range: CFRange) -> Unmanaged<CFString>?
 
 // MARK: - Lookup
 
-/// The Oxford Thai-English dictionary, resolved once from the active set.
-let thaiEnglishDictionary: DCSDictionaryRef? = {
-    let actives = DCSGetActiveDictionaries() as [AnyObject]
+/// Finds the first active dictionary whose identifier contains `marker`.
+private func resolveActiveDictionary(containing marker: String) -> DCSDictionaryRef? {
+    let actives = DCSGetActiveDictionaries().takeUnretainedValue() as [AnyObject]
     for d in actives {
-        let ident = DCSDictionaryGetIdentifier(d as CFTypeRef) as String
-        if ident.contains("th-en") { return d as CFTypeRef }
+        let ident = DCSDictionaryGetIdentifier(d as CFTypeRef).takeUnretainedValue() as String
+        if ident.contains(marker) { return d as CFTypeRef }
     }
     return nil
-}()
+}
 
-/// Look up `text` in the Thai-English dictionary. Returns the raw definition
-/// string, or nil when the input is empty/whitespace or has no entry.
-func translate(_ text: String) -> String? {
-    // Fail closed when the Thai-English dictionary is not enabled: passing a
-    // nil dictionary would make DCSCopyTextDefinition search ALL active
-    // dictionaries, silently violating the "th-en only" contract.
-    guard let dict = thaiEnglishDictionary else { return nil }
+/// The Oxford Thai-English dictionary, resolved once from the active set.
+let thaiEnglishDictionary: DCSDictionaryRef? = resolveActiveDictionary(containing: "th-en")
+
+/// The New Oxford American Dictionary (English-English), resolved once from
+/// the active set. Used as a fallback when a word has no Thai translation.
+let englishDictionary: DCSDictionaryRef? = resolveActiveDictionary(containing: "NOAD")
+
+/// Looks up `text` in `dict`. Returns the raw definition string, or nil when
+/// the input is empty/whitespace, `dict` is unavailable, or there is no entry.
+private func lookUp(_ text: String, in dict: DCSDictionaryRef?) -> String? {
+    // Fail closed on a nil dictionary: passing nil to DCSCopyTextDefinition
+    // makes it search ALL active dictionaries, silently ignoring the caller's
+    // intended scope.
+    guard let dict = dict else { return nil }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     let ns = trimmed as NSString
@@ -49,40 +60,73 @@ func translate(_ text: String) -> String? {
     return def as String
 }
 
+/// Look up `text` in the Thai-English dictionary.
+func translate(_ text: String) -> String? {
+    lookUp(text, in: thaiEnglishDictionary)
+}
+
+/// Look up `text` in the English-English dictionary. Used when `translate`
+/// finds no Thai entry for the word.
+func lookUpEnglishOnly(_ text: String) -> String? {
+    lookUp(text, in: englishDictionary)
+}
+
 // MARK: - Result Formatting
 
-/// The dictionary's fixed section headers. Everything before the first one
-/// is the main definition; everything from the first one onward is left as
-/// the dictionary wrote it, since phrase entries within a section have no
-/// reliable separator to split on.
-private let dictionarySectionHeaders = ["PHRASES / DERIVATIVES", "SYNONYMS"]
-
-/// Reformats a raw dictionary definition into readable phases: the main
-/// senses as a bullet list, followed by each section on its own heading.
-func formatForDisplay(_ raw: String) -> String {
-    let text = raw.trimmingCharacters(in: .whitespaces)
-
+/// Splits `text` at the first occurrence of any fixed section `headers`,
+/// then puts each header on its own line. Everything within a section is
+/// left as the dictionary wrote it, since entries inside a section (phrases,
+/// derivatives, etc.) have no reliable separator to split further.
+private func splitSections(_ text: String, headers: [String]) -> (mainBody: String, sectionsText: String) {
     var mainBody = text
     var sectionsText = ""
-    if let firstRange = dictionarySectionHeaders
+    if let firstRange = headers
         .compactMap({ text.range(of: $0) })
         .min(by: { $0.lowerBound < $1.lowerBound }) {
         mainBody = String(text[text.startIndex..<firstRange.lowerBound])
         sectionsText = String(text[firstRange.lowerBound...])
     }
-
-    for header in dictionarySectionHeaders {
+    for header in headers {
         sectionsText = sectionsText.replacingOccurrences(of: header, with: "\n\n\(header)\n")
     }
-    sectionsText = sectionsText.trimmingCharacters(in: .whitespacesAndNewlines)
+    return (
+        mainBody.trimmingCharacters(in: .whitespaces),
+        sectionsText.trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+}
+
+/// Section headers used by the Oxford Thai-English dictionary.
+private let thaiEnglishSectionHeaders = ["PHRASES / DERIVATIVES", "SYNONYMS"]
+
+/// Reformats a raw Thai-English definition into readable phases: the main
+/// senses as a bullet list (senses are comma-separated in this dictionary),
+/// followed by each section on its own heading.
+func formatForDisplay(_ raw: String) -> String {
+    let (mainBody, sectionsText) = splitSections(raw.trimmingCharacters(in: .whitespaces), headers: thaiEnglishSectionHeaders)
 
     let senses = mainBody
-        .trimmingCharacters(in: .whitespaces)
         .components(separatedBy: ", ")
         .map { "• " + $0.trimmingCharacters(in: .whitespaces) }
         .joined(separator: "\n")
 
     return sectionsText.isEmpty ? senses : "\(senses)\n\n\(sectionsText)"
+}
+
+/// Section headers used by the New Oxford American Dictionary (English-English).
+private let englishEnglishSectionHeaders = ["PHRASAL VERBS", "PHRASES", "DERIVATIVES", "USAGE", "ORIGIN"]
+
+/// Prefix shown above an English-English fallback result, so the user
+/// understands why no Thai translation appears.
+private let englishOnlyNotice = "(คำศัพท์ภาษาอังกฤษ — ไม่มีคำแปลไทย)\n\n"
+
+/// Reformats a raw English-English definition into readable phases. Unlike
+/// the Thai-English dictionary, senses here are numbered prose (e.g. "1 ...
+/// 2 ..."), not comma-separated, so the main body is left as one paragraph
+/// and only the section headers are split onto their own lines.
+func formatEnglishEnglishForDisplay(_ raw: String) -> String {
+    let (mainBody, sectionsText) = splitSections(raw.trimmingCharacters(in: .whitespaces), headers: englishEnglishSectionHeaders)
+    let body = sectionsText.isEmpty ? mainBody : "\(mainBody)\n\n\(sectionsText)"
+    return englishOnlyNotice + body
 }
 
 // MARK: - Popover View Controller
@@ -194,6 +238,9 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
         }
         if let def = translate(trimmed) {
             resultTextView.string = formatForDisplay(def)
+            resultTextView.textColor = .labelColor
+        } else if let enDef = lookUpEnglishOnly(trimmed) {
+            resultTextView.string = formatEnglishEnglishForDisplay(enDef)
             resultTextView.textColor = .labelColor
         } else {
             resultTextView.string = "ไม่พบคำว่า “\(trimmed)”"
