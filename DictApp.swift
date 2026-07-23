@@ -49,6 +49,42 @@ func translate(_ text: String) -> String? {
     return def as String
 }
 
+// MARK: - Result Formatting
+
+/// The dictionary's fixed section headers. Everything before the first one
+/// is the main definition; everything from the first one onward is left as
+/// the dictionary wrote it, since phrase entries within a section have no
+/// reliable separator to split on.
+private let dictionarySectionHeaders = ["PHRASES / DERIVATIVES", "SYNONYMS"]
+
+/// Reformats a raw dictionary definition into readable phases: the main
+/// senses as a bullet list, followed by each section on its own heading.
+func formatForDisplay(_ raw: String) -> String {
+    let text = raw.trimmingCharacters(in: .whitespaces)
+
+    var mainBody = text
+    var sectionsText = ""
+    if let firstRange = dictionarySectionHeaders
+        .compactMap({ text.range(of: $0) })
+        .min(by: { $0.lowerBound < $1.lowerBound }) {
+        mainBody = String(text[text.startIndex..<firstRange.lowerBound])
+        sectionsText = String(text[firstRange.lowerBound...])
+    }
+
+    for header in dictionarySectionHeaders {
+        sectionsText = sectionsText.replacingOccurrences(of: header, with: "\n\n\(header)\n")
+    }
+    sectionsText = sectionsText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let senses = mainBody
+        .trimmingCharacters(in: .whitespaces)
+        .components(separatedBy: ", ")
+        .map { "• " + $0.trimmingCharacters(in: .whitespaces) }
+        .joined(separator: "\n")
+
+    return sectionsText.isEmpty ? senses : "\(senses)\n\n\(sectionsText)"
+}
+
 // MARK: - Popover View Controller
 
 final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
@@ -157,7 +193,7 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
             return
         }
         if let def = translate(trimmed) {
-            resultTextView.string = def
+            resultTextView.string = formatForDisplay(def)
             resultTextView.textColor = .labelColor
         } else {
             resultTextView.string = "ไม่พบคำว่า “\(trimmed)”"
