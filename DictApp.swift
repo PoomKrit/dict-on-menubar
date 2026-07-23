@@ -138,6 +138,7 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
     private let resultTextView = NSTextView()
     private let scrollView = NSScrollView()
     private var debounceTimer: Timer?
+    private let spellDocumentTag = NSSpellChecker.uniqueSpellDocumentTag()
 
     private let contentWidth: CGFloat = 320
     private let resultsHeight: CGFloat = 220
@@ -227,6 +228,32 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
         debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
             self?.performLookup(query)
         }
+        // Ask AppKit's built-in completion popup to refresh. It calls back
+        // into control(_:textView:completions:forPartialWordRange:...) below
+        // for the candidate list.
+        if let editor = searchField.currentEditor() as? NSTextView {
+            editor.complete(nil)
+        }
+    }
+
+    /// Supplies word completions for the built-in NSTextView completion
+    /// popup (the standard macOS autocomplete dropdown). Detects Thai vs.
+    /// English from the typed text's Unicode range and asks NSSpellChecker
+    /// for that language's completions — this is the same system word list
+    /// used by every native macOS text field, so it needs no bundled word
+    /// list and stays fully offline.
+    func control(_ control: NSControl, textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String] {
+        let partial = (textView.string as NSString).substring(with: charRange)
+        guard !partial.isEmpty else { return [] }
+        let isThai = partial.unicodeScalars.contains { (0x0E00...0x0E7F).contains($0.value) }
+        let language = isThai ? "th" : "en"
+        index.pointee = -1
+        return NSSpellChecker.shared.completions(
+            forPartialWordRange: NSRange(location: 0, length: (partial as NSString).length),
+            in: partial,
+            language: language,
+            inSpellDocumentWithTag: spellDocumentTag
+        ) ?? []
     }
 
     private func performLookup(_ query: String) {
