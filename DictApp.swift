@@ -372,9 +372,9 @@ final class MenubarController: NSObject {
     private let popoverVC = PopoverViewController()
     private var hotKey: GlobalHotKey?
 
-    /// Global shortcut that toggles the popover: Control + Option + D.
+    /// Global shortcut that toggles the popover: Shift + Option + D.
     private static let hotKeyCode = kVK_ANSI_D
-    private static let hotKeyModifiers = controlKey | optionKey
+    private static let hotKeyModifiers = shiftKey | optionKey
 
     override init() {
         super.init()
@@ -391,7 +391,7 @@ final class MenubarController: NSObject {
             button.image?.isTemplate = true
             button.target = self
             button.action = #selector(togglePopover(_:))
-            button.toolTip = "Dict on Menubar (⌃⌥D)"
+            button.toolTip = "Dict on Menubar (⇧⌥D)"
         }
 
         hotKey = GlobalHotKey(keyCode: MenubarController.hotKeyCode,
@@ -399,7 +399,7 @@ final class MenubarController: NSObject {
             self?.togglePopover(nil)
         }
         if hotKey == nil {
-            NSLog("Dict on Menubar: could not register global shortcut ⌃⌥D (already in use?)")
+            NSLog("Dict on Menubar: could not register global shortcut ⇧⌥D (already in use?)")
         }
     }
 

@@ -8,7 +8,7 @@ no API key, no Xcode.
 ## Features
 
 - Lives in the menubar — no Dock icon, no window
-- Click the icon — or press **⌃⌥D** (Control + Option + D) from any app — to
+- Click the icon — or press **⇧⌥D** (Shift + Option + D) from any app — to
   open a search popover (search field is auto-focused); press it again to close
 - Type Thai **or** English — bidirectional lookup
 - Live results with a 300 ms debounce as you type
