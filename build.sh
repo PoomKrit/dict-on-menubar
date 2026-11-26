@@ -5,7 +5,7 @@ APP="DictApp"
 BUNDLE="${APP}.app"
 
 echo "Compiling..."
-swiftc "${APP}.swift" -framework AppKit -framework CoreServices -o "${APP}"
+swiftc "${APP}.swift" -framework AppKit -framework CoreServices -framework Carbon -o "${APP}"
 
 echo "Building app bundle..."
 rm -rf "${BUNDLE}"

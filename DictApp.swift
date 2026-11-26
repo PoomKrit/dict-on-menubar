@@ -1,8 +1,9 @@
 // DictApp.swift
-// Build: swiftc DictApp.swift -framework AppKit -framework CoreServices -o DictApp
+// Build: swiftc DictApp.swift -framework AppKit -framework CoreServices -framework Carbon -o DictApp
 // Run:   ./DictApp
 
 import AppKit
+import Carbon.HIToolbox
 import CoreServices
 
 // MARK: - DictionaryServices Bridge (private API)
@@ -324,12 +325,56 @@ final class PopoverViewController: NSViewController, NSSearchFieldDelegate {
     }
 }
 
+// MARK: - Global Hotkey
+
+/// System-wide keyboard shortcut via Carbon's RegisterEventHotKey. Unlike
+/// NSEvent global monitors, this needs no Accessibility permission and the
+/// key press is consumed (not passed on to the frontmost app).
+final class GlobalHotKey {
+    /// Single hotkey per process, so a static is enough to bridge the C callback.
+    private static var action: (() -> Void)?
+    private static var handlerInstalled = false
+
+    private var hotKeyRef: EventHotKeyRef?
+
+    /// Returns nil if the shortcut could not be registered (e.g. already
+    /// taken by another app).
+    init?(keyCode: Int, modifiers: Int, action: @escaping () -> Void) {
+        GlobalHotKey.action = action
+
+        if !GlobalHotKey.handlerInstalled {
+            var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                          eventKind: UInt32(kEventHotKeyPressed))
+            let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+                GlobalHotKey.action?()
+                return noErr
+            }, 1, &eventType, nil, nil)
+            guard status == noErr else { return nil }
+            GlobalHotKey.handlerInstalled = true
+        }
+
+        let hotKeyID = EventHotKeyID(signature: OSType(0x44494354), id: 1)  // 'DICT'
+        let status = RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hotKeyID,
+                                         GetApplicationEventTarget(), 0, &hotKeyRef)
+        guard status == noErr else { return nil }
+    }
+
+    deinit {
+        if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
+    }
+}
+
 // MARK: - Menubar Controller
 
 final class MenubarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let popoverVC = PopoverViewController()
+    private var hotKey: GlobalHotKey?
+
+    /// Global shortcut that toggles the popover: Control + Option + D.
+    private static let hotKeyCode = kVK_ANSI_D
+    private static let hotKeyModifiers = controlKey | optionKey
 
     override init() {
         super.init()
@@ -346,6 +391,15 @@ final class MenubarController: NSObject {
             button.image?.isTemplate = true
             button.target = self
             button.action = #selector(togglePopover(_:))
+            button.toolTip = "Dict on Menubar (⌃⌥D)"
+        }
+
+        hotKey = GlobalHotKey(keyCode: MenubarController.hotKeyCode,
+                              modifiers: MenubarController.hotKeyModifiers) { [weak self] in
+            self?.togglePopover(nil)
+        }
+        if hotKey == nil {
+            NSLog("Dict on Menubar: could not register global shortcut ⌃⌥D (already in use?)")
         }
     }
 
@@ -354,6 +408,9 @@ final class MenubarController: NSObject {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // An accessory app is not frontmost when the global shortcut
+            // fires; activate it so the search field receives keystrokes.
+            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             popoverVC.focusSearchField()
